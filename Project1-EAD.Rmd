@@ -1,0 +1,897 @@
+---
+title: "Estatística e Análise de Dados"
+author: "José Pinto, Nirbhaya Shaji"
+date: "21/04/2020"
+output:
+  pdf_document: default
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This work has been performed to develop experience in a full data science and analysis pipeline,<br>
+obtain the data, visualize its features, pre-process it should it be necessary, model the data and<br>
+make predictions and evaluate the results.<br>
+An emphasis has been made in the modeling, with the models being restricted to the ones taught in class.<br>
+
+## Goals
+
+Classification and predictions on a real world dataset.<br>
+Obtain practical and theoretical experience with classification tasks using a subset of models.<br>
+
+## Models
+
+In the work presented below we worked with several different models for classification.<br>
+The models are linear regression (LR), multinomial logistic regression (MLR), linear discriminant analysis (LDA) and quadratic discriminant analysis (QDA)br<br>
+
+For LR and MLR we also use LASSO and RIDGE variants.<br>
+
+Two unsupervised clustering models were also employed, hierarchical clustering and expectation maximization for mixture distributions (EMMD). Both of these were not used for classification, but for further data analisys.<br>
+
+## Dataset
+
+The dataset we are going to work with is the 2019 "World Happiness Report" dataset available in kaggle<br>
+"https://www.kaggle.com/unsdsn/world-happiness/data" The dataset contains information about country, region<br>
+and several other variables used to calculate the happiness score.<br>
+
+The dataset is comprised of a total of 156 observations (rows/countries) and 9 variables (columns), 1 target and 8<br>
+predictors.<br>
+The variables are as follows:<br>
+
+Target variable:<br>
+<b>Score</b> - The happiness score obtained based on the other features (continuous value)<br>
+
+Predictor variables:<br>
+<b>Overall rank</b> - Rank of the country based on the Happiness Score. (integer value)<br>
+<b>Country or region</b> - Country the data belongs to (categorical value)<br>
+<b>GDP per capita</b>	- Gross domestic product per person (continuous value)<br>
+<b>Social support</b> - Amount of social support received (continuous value)<br>
+<b>Healthy life expectancy</b> -	Average life expectancy of individuals (continuous value))<br>
+<b>Freedom to make life choices</b> -	Amount of freedom to make choices (continuous value)<br>
+<b>Generosity</b> - Amount of generosity (continuous value)<br>
+<b>Perceptions of corruption</b> - Perceived amount of corruption in country (continuous value)<br>
+
+All the required libraries are imported here to more easily identify dependencies.<br>
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(mlbench)
+library(class)
+library(GGally)
+library(magrittr)
+library(MASS)
+library(hmeasure)
+library(randomForest)
+library(reshape2)
+library(glmnet)
+library(ggplot2)
+library(reshape2)
+library(nnet)
+library(MLmetrics)
+library(MASS)
+library(tidyverse)
+library(CrossValidate)
+library(mclust)
+library(klaR)
+library(caret)
+library(dendextend)
+```
+
+As the work is intended to be performed on a categorical target the variables will be discretized into intervals.<br>
+Due to the nature of the data both "Overall rank" and "Country or region" will be removed.<br>
+
+Import the data and check variable types.<br>
+
+```{r dataset}
+WHR = read.csv("2019.csv")
+WHR = WHR[3:9]
+str(WHR)
+```
+First entries of the data.<br>
+
+```{r head}
+head(WHR)
+```
+
+Summary of data distribution.<br>
+
+```{r summary}
+summary(WHR)
+```
+
+Scatterplots of data.<br>
+
+```{r pairs}
+pairs(WHR)
+```
+
+Histograms and boxplots of data.<br>
+
+```{r histBox, message=FALSE, warning=FALSE}
+data = melt(WHR)
+ggplot(data,aes(x=value))+facet_wrap(~variable,scales = "free_x")+geom_histogram()
+ggplot(data, aes(factor(variable), value)) +
+  geom_boxplot() + facet_wrap(~variable, scale="free") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+```{r seed}
+#set the seed so we can replicate results
+set.seed(123)
+```
+
+## Discretize target variable
+
+Due to the values that the target variable (score) takes, the simplest way to discretize it<br>
+is just to round.<bt>
+
+```{r targetSplit}
+WHRDiscrete = WHR
+WHRDiscrete$Score = as.factor(round(WHRDiscrete$Score))
+```
+
+Data distribution per target variable.<br>
+
+```{r targetSummary, fig.width=20, fig.height=10, message=FALSE}
+WHRDiscrete %>% ggpairs(.,mapping=ggplot2::aes(colour=Score));
+```
+
+## Data Split
+
+Now that we have the data we split it into train and test data.<br>
+
+```{r dataSplit}
+targetColumn = 1
+
+#set percentage of data for training to 80%
+trainPercent = 0.8
+#get the indices of the rows for training
+trainRows = balancedSplit(WHRDiscrete$Score, trainPercent)
+#get the rows with the training indices
+trainWHR = WHRDiscrete[trainRows,-targetColumn]
+trainWHRY = WHRDiscrete[trainRows,targetColumn]
+#get the rows that are not training indices (test data)
+testWHR = WHRDiscrete[not(trainRows),-targetColumn]
+testWHRY = WHRDiscrete[not(trainRows),targetColumn]
+```
+
+## Modeling
+
+In this section we train the models and check the learned parameters.<br>
+
+### Expectation Maximization for Mixture Distributions - EMMD
+
+We face a classification problem, and as this method is a clustering one, without any way to create reasonable predictions, we will use it only for further data analysis.<br>
+
+```{r EMMD, results="hide", message=FALSE, warning=FALSE}
+#create a EMMD model with automatically picked number of clusters
+EMMDModel = Mclust(trainWHR)
+#visualize clusters
+pairs(trainWHR,col = EMMDModel$classification)
+#create a EMMD model with the number of clusters being the number of classes
+EMMDFixedModel = Mclust(trainWHR,G=6)
+#visualize clusters
+pairs(trainWHR,col = EMMDFixedModel$classification)
+```
+
+The leaned model without restrictions selected 3 clusters, which is not the number of classes in our data. This however is to be expected, given that the data was split into mostly arbitrary classes. This division could indicate groups of countries with similar and distinct characteristics. This is slightly amusing, given the colloquial description of countries as being first world, second world and third world.<br>
+When we force the data into our 6 classes, the results are as expected poor, with the number in each class being radically different from the real numbers.<br>
+
+### Borders
+
+We will for all the models present the decision boundaries.<br>
+Below is the function used to plot them.<br>
+Due to file size restrictions (to deliver by mail), only one border will be shown per model.<br>
+To change this comment the "return()" line in each model border drawing loop.<br>
+
+```{r decisionBoundaries, results="hide", message=FALSE, warning=FALSE}
+#draw the decision boundaries for the model
+boundaryPlot = function(model, X, Y, predFunction, resolution = 150, newData = NULL, newDataY = NULL, parameters = list()) {
+  if(is.null(newData)){
+    newData = X
+    newDataY = Y
+  }
+  
+  #get ranes for the data (min and max)
+  ranges = sapply(newData[,c(1:2)], range)
+  #get n points bettwen the ranges
+  xAxis = seq(ranges[1,1], ranges[2,1], length.out = resolution)
+  yAxis = seq(ranges[1,2], ranges[2,2], length.out = resolution)
+  #create a grid of points
+  grid = data.frame(expand.grid(xAxis,yAxis))
+  
+  names(grid) = names(X)
+  pred = predFunction(model, grid, newDataY, parameters)
+  
+  #get the values for contour
+  numericPred = as.numeric(pred)-1
+  
+  plotz=ggplot(data=grid, aes(grid[,1], grid[,2])) +
+    #place background color for predicions
+    geom_point(aes(colour=as.factor(pred)), size=4,shape=16,alpha=.02) +
+    #place prediction borders
+    geom_contour(aes(z=numericPred), colour='black', size = 2,alpha=1) +
+    #place data points
+    geom_point(data=newData, aes(newData[,1], newData[,2], colour=as.factor(newDataY)),size=3,shape=16,alpha=.8)+
+    #select display colors
+    scale_color_manual(values=c("#0000FF", "#00FF00", "#00FFFF", "#FF0000", "#FF00FF", "#FFFF00")) +
+    theme_bw() +
+    #set x and y labels
+    xlab(names(X)[1]) +
+    ylab(names(X)[2])
+
+  return(plotz)
+}
+```
+
+### LR
+
+We will use linear regression to predict the classes.<br>
+Linear regression is typically not used for classification tasks, especially for multiple classes.<br>
+In order to perform this we will create dummy variables and train the data to predict the values of each dummy.<br>
+Then select the target variable with the highest predicted value.<br>
+We expect really bad results.<br>
+
+```{r LRModel, results="hide", message=FALSE, warning=FALSE}
+#turn taget variable into set of dummy variables
+dummyTargets = model.matrix(~trainWHRY+0)
+#train model
+LRModel = lm(dummyTargets~.,data = trainWHR)
+```
+
+### LR Borders
+
+Here we present the decision boundaries using subsets of two variables.<br>
+
+```{r LRBoundaries, results="hide", message=FALSE, warning=FALSE}
+#function to obtain LR predictions from X
+LRPredFunction = function(model, X, Y, ...){
+  #get the predicted values for the grid
+  rawPred = predict(model, X)
+  pred=c()
+  for (row in 1:length(rawPred[,1])) {
+    maxProb = max(rawPred[row,])
+    maxIndex = match(maxProb,rawPred[row,])
+    maxValue = levels(Y)[maxIndex]
+    pred = c(pred,maxValue)
+  }
+  return(pred)
+}
+
+#get the names of the columns in the final model
+columns = names(trainWHR)
+#get number of columns
+ncols = length(columns)
+
+#select the first column
+for(column1 in seq(1,ncols-1,1)){
+  #select a diferent second column that has not been a first columns
+  for(column2 in seq(column1+1,ncols,1)){
+    WHRToBorder = trainWHR[,c(columns[column1],columns[column2])]
+    LRBorderModel = lm(dummyTargets~.,data = WHRToBorder)
+    print(boundaryPlot(LRBorderModel,WHRToBorder,trainWHRY,LRPredFunction))
+    #comment next line to show all borders
+    return()
+  }
+}
+```
+
+### LR Lasso
+
+We will use LASSO linear regression to predict the classes.<br>
+LASSO Linear regression is typically not used for classification tasks, especially for multiple classes.<br>
+In order to perform this we will create dummy variables and train the data to predict the values of each dummy.<br>
+Then select the target variable with the highest predicted value.<br>
+We expect really bad results.<br>
+
+```{r LRLassoModel, results="hide", message=FALSE, warning=FALSE}
+#turn taget variable into set of dummy variables
+dummyTargets = model.matrix(~trainWHRY+0)
+#find the best lambda value
+LRLassoLambda = cv.glmnet(as.matrix(trainWHR), dummyTargets, alpha = 1, family = "mgauss")$lambda.1se
+
+#train model
+LRLassoModel = glmnet(as.matrix(trainWHR), dummyTargets, alpha = 1, lambda = LRLassoLambda, family = "mgauss")
+```
+
+### LR Lasso Borders
+
+Here we present the decision boundaries using subsets of two variables.<br>
+
+```{r LRLassoBoundaries, results="hide", message=FALSE, warning=FALSE}
+#function to obtain LR Lasso predictions from X
+LRLassoPredFunction = function(model, X, Y, parameters){
+  rawPred = predict(model,s=parameters[["lambda"]], as.matrix(X))[,,1]
+  pred=c()
+  for (row in 1:length(rawPred[,1])) {
+    maxProb = max(rawPred[row,])
+    maxIndex = match(maxProb,rawPred[row,])
+    maxValue = levels(Y)[maxIndex]
+    pred = c(pred,maxValue)
+  }
+  return(pred)
+}
+  
+#get the names of the columns in the final model
+columns = names(trainWHR)
+#get number of columns
+ncols = length(columns)
+
+#select the first column
+for(column1 in seq(1,ncols-1,1)){
+  #select a diferent second column that has not been a first columns
+  for(column2 in seq(column1+1,ncols,1)){
+    WHRToBorder = trainWHR[,c(columns[column1],columns[column2])]
+    lambda = cv.glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 1, family = "mgauss")$lambda.1se
+    LRLassoBorderModel = glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 1, lambda = lambda, family = "mgauss")
+    print(boundaryPlot(LRLassoBorderModel,WHRToBorder,trainWHRY,LRLassoPredFunction, parameters = list("lambda"=lambda)))
+    #comment next line to show all borders
+    return()
+  }
+}
+```
+
+### LR Ridge
+
+We will use Ridge linear regression to predict the classes.<br>
+Ridge Linear regression is typically not used for classification tasks, especially for multiple classes.<br>
+In order to perform this we will create dummy variables and train the data to predict the values of each dummy.<br>
+Then select the target variable with the highest predicted value.<br>
+We expect really bad results.<br>
+
+```{r LRRidgeModel, results="hide", message=FALSE, warning=FALSE}
+#turn taget variable into set of dummy variables
+dummyTargets = model.matrix(~trainWHRY+0)
+#find the best lambda value
+LRRidgeLambda = cv.glmnet(as.matrix(trainWHR), dummyTargets, alpha = 0, family = "mgauss")$lambda.1se
+
+#train model
+LRRidgeModel = glmnet(as.matrix(trainWHR), dummyTargets, alpha = 0, lambda = LRRidgeLambda, family = "mgauss")
+```
+
+### LR Ridge Borders
+
+Here we present the decision boundaries using subsets of two variables.<br>
+
+```{r LRRidgeBoundaries, results="hide", message=FALSE, warning=FALSE}
+#function to obtain LR Ridge predictions from X
+LRRidgePredFunction = function(model, X, Y, parameters){
+  rawPred = predict(model,s=parameters[["lambda"]], as.matrix(X))[,,1]
+  pred=c()
+  for (row in 1:length(rawPred[,1])) {
+    maxProb = max(rawPred[row,])
+    maxIndex = match(maxProb,rawPred[row,])
+    maxValue = levels(Y)[maxIndex]
+    pred = c(pred,maxValue)
+  }
+  return(pred)
+}
+
+#get the names of the columns in the final model
+columns = names(trainWHR)
+#get number of columns
+ncols = length(columns)
+
+#select the first column
+for(column1 in seq(1,ncols-1,1)){
+  #select a diferent second column that has not been a first columns
+  for(column2 in seq(column1+1,ncols,1)){
+    WHRToBorder = trainWHR[,c(columns[column1],columns[column2])]
+    lambda = cv.glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 0, family = "mgauss")$lambda.1se
+    LRRidgeBorderModel = glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 0, lambda = lambda, family = "mgauss")
+    print(boundaryPlot(LRRidgeBorderModel,WHRToBorder,trainWHRY,LRRidgePredFunction, parameters = list("lambda"=lambda)))
+    #comment next line to show all borders
+    return()
+  }
+}
+```
+
+### MLR
+
+The MLR (multinomial logistic regression) is the generalization of logistic regression for more than 2 classes.<br>
+The library used utilizes neural networks for a more efficient approximation.<br>
+Due to it being an approximation no significance values are available for variable selection.<br>
+The AIC values after training will be used for stepwise variable selection.<br>
+
+```{r MLRModel, results="hide", message=FALSE, warning=FALSE}
+#perform backwards stepwise parameter search on multinomial model
+multinomialStepWise = function(data,dataY){
+  minMLRModel = multinom(dataY~., data=data, trace=FALSE)
+  minData = data
+  minAic = minMLRModel$AIC
+  while(TRUE){
+    prevAic = minAic
+    for (column in names(data)) {
+      #remove one column from the data
+      reducedData = data
+      reducedData[column] = NULL
+      
+      #get a new model with the reduced data
+      MLRModel = multinom(dataY~., data=reducedData)
+      
+      #check if aic decreased
+      if(MLRModel$AIC < minAic){
+        #update the best model found
+        minAic = MLRModel$AIC
+        minMLRModel = MLRModel
+        minData = reducedData
+      }
+    }
+    #if model didnt change return it
+    if(prevAic == minAic){
+      return(minMLRModel)
+    }
+    #restrict the data for the next loop
+    data=minData
+  }
+}
+
+MLRModel = multinomialStepWise(trainWHR,trainWHRY)
+```
+
+```{r MLRModelSummary}
+MLRModel
+```
+
+### MLR Borders
+
+Here we present the decision boundaries using subsets of two variables.<br>
+We will only present for the variables present in the final model.<br>
+
+```{r MLRBoundaries, results="hide", message=FALSE, warning=FALSE}
+#function to obtain MLR predictions from X
+MLRPredFunction = function(model, X, ...){
+  return(predict(model, X))
+}
+
+#get the names of the columns in the final model
+columns = MLRModel$coefnames[-1]
+#get number of columns
+ncols = length(columns)
+
+#select the first column
+for(column1 in seq(1,ncols-1,1)){
+  #select a diferent second column that has not been a first columns
+  for(column2 in seq(column1+1,ncols,1)){
+    WHRToBorder = trainWHR[,c(columns[column1],columns[column2])]
+    MLRBorderModel = multinom(trainWHRY~., data=WHRToBorder)
+    print(boundaryPlot(MLRBorderModel,WHRToBorder,trainWHRY,MLRPredFunction))
+    #comment next line to show all borders
+    return()
+  }
+}
+```
+
+### MLR Lasso
+
+We will use LASSO multinomial  logistic regression to predict the classes.<br>
+In order to perform this we will create dummy variables and train the data to predict the values of each dummy.<br>
+Then select the target variable with the highest predicted value.<br>
+
+```{r MLRLassoModel, results="hide", message=FALSE, warning=FALSE}
+#turn taget variable into set of dummy variables
+dummyTargets = model.matrix(~trainWHRY+0)
+
+success = FALSE
+#due to randomness mlr sometimes gives an error. run until success
+while(not(success)){
+  try(
+    {
+      #find the best lambda value
+      MLRLassoLambda = cv.glmnet(as.matrix(trainWHR), dummyTargets, alpha = 1, family = "multinomial")$lambda.1se
+      
+      #train model
+      MLRLassoModel = glmnet(as.matrix(trainWHR), dummyTargets, alpha = 1, lambda = MLRLassoLambda, family = "multinomial")
+      success = TRUE
+    }
+  )
+}
+```
+
+### MLR Lasso Borders
+
+Here we present the decision boundaries using subsets of two variables.<br>
+
+```{r MLRLassoBoundaries, results="hide", message=FALSE, warning=FALSE}
+#function to obtain MLR Lasso predictions from X
+MLRLassoPredFunction = function(model, X, Y, parameters){
+  rawPred = predict(model,s=parameters[["lambda"]], as.matrix(X))[,,1]
+  pred=c()
+  for (row in 1:length(rawPred[,1])) {
+    maxProb = max(rawPred[row,])
+    maxIndex = match(maxProb,rawPred[row,])
+    maxValue = levels(Y)[maxIndex]
+    pred = c(pred,maxValue)
+  }
+  return(pred)
+}
+
+#get the names of the columns in the final model
+columns = names(trainWHR)
+#get number of columns
+ncols = length(columns)
+
+#select the first column
+for(column1 in seq(1,ncols-1,1)){
+  #select a diferent second column that has not been a first columns
+  for(column2 in seq(column1+1,ncols,1)){
+    WHRToBorder = trainWHR[,c(columns[column1],columns[column2])]
+    success = FALSE
+    #due to randomness mlr sometimes gives an error. run until success
+    while(not(success)){
+      try(
+        {
+          #find the best lambda value
+          lambda = cv.glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 1, family = "multinomial")$lambda.1se
+          #train model
+          MLRLassoBorderModel = glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 1, lambda = lambda, family = "multinomial")
+          success = TRUE
+        }
+      )
+    }
+    print(boundaryPlot(MLRLassoBorderModel,WHRToBorder,trainWHRY,MLRLassoPredFunction,parameters = list("lambda"=lambda)))
+    #comment next line to show all borders
+    return()
+  }
+}
+```
+
+### MLR Ridge
+
+We will use RIDGE multinomial logistic regression to predict the classes.<br>
+In order to perform this we will create dummy variables and train the data to predict the values of each dummy.<br>
+Then select the target variable with the highest predicted value.<br>
+
+```{r MLRRidgeModel, results="hide", message=FALSE, warning=FALSE}
+#turn taget variable into set of dummy variables
+dummyTargets = model.matrix(~trainWHRY+0)
+
+success = FALSE
+#due to randomness mlr sometimes gives an error. run until success
+while(not(success)){
+  try(
+    {
+      #find the best lambda value
+      MLRRidgeLambda = cv.glmnet(as.matrix(trainWHR), dummyTargets, alpha = 0, family = "multinomial")$lambda.1se
+
+      #train model
+      MLRRidgeModel = glmnet(as.matrix(trainWHR), dummyTargets, alpha = 0, lambda = MLRRidgeLambda, family = "multinomial")
+      success = TRUE
+    }
+  )
+}
+```
+
+### MLR Ridge Borders
+
+Here we present the decision boundaries using subsets of two variables.<br>
+
+```{r MLRRidgeBoundaries, results="hide", message=FALSE, warning=FALSE}
+#function to obtain MLR Ridge predictions from X
+MLRRidgePredFunction = function(model, X, Y, parameters){
+  rawPred = predict(model,s=parameters[["lambda"]], as.matrix(X))[,,1]
+  pred=c()
+  for (row in 1:length(rawPred[,1])) {
+    maxProb = max(rawPred[row,])
+    maxIndex = match(maxProb,rawPred[row,])
+    maxValue = levels(Y)[maxIndex]
+    pred = c(pred,maxValue)
+  }
+  return(pred)
+}
+
+#get the names of the columns in the final model
+columns = names(trainWHR)
+#get number of columns
+ncols = length(columns)
+
+#select the first column
+for(column1 in seq(1,ncols-1,1)){
+  #select a diferent second column that has not been a first columns
+  for(column2 in seq(column1+1,ncols,1)){
+    WHRToBorder = trainWHR[,c(columns[column1],columns[column2])]
+    success = FALSE
+    #due to randomness mlr sometimes gives an error. run until success
+    while(not(success)){
+      try(
+        {
+          #find the best lambda value
+          lambda = cv.glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 0, family = "multinomial")$lambda.1se
+          #train model
+          MLRRidgeBorderModel = glmnet(as.matrix(WHRToBorder), dummyTargets, alpha = 0, lambda = lambda, family = "multinomial")
+          success = TRUE
+        }
+      )
+    }
+    print(boundaryPlot(MLRRidgeBorderModel,WHRToBorder,trainWHRY,MLRRidgePredFunction,parameters = list("lambda"=lambda)))
+    #comment next line to show all borders
+    return()
+  }
+}
+```
+
+### LDA
+
+
+Here we use LDA as a classifier which is modeled using MASS R library. We get a couple of model parameters such as prior probabilities of groups, the group means and the coefficients of linear discriminant.  The most important result here is the coefficients, they are values that describe the new feature space where the data will be project in. LDA reduces dimensionality from original number of feature to C — 1 features, where C is the number of classes. In this case, we have 6 classes, therefore the new feature space will have only 5 features. 
+
+
+
+```{r LDA, message=FALSE, warning=FALSE}
+
+table(WHRDiscrete$Score)
+
+model_lda = lda(trainWHRY~., data = trainWHR)
+model_lda
+
+```
+
+The below picture is the plot of the new feature space with the only two features, we can see the new position of the data, there is are points overlapping between the six classes, but in general, the dataset is pretty separable. 
+
+```{r}
+
+#LDA plot
+lda.data = cbind(trainWHR, predict(model_lda)$x)
+Score = trainWHRY
+ggplot(lda.data, aes(LD1, LD2)) +
+  geom_point(aes(color = Score)) 
+
+```
+
+
+
+
+### QDA
+
+QDA is implemented in R using the qda() function, which is also part of the MASS library. The syntax is identical to that of lda(). For qda() to work its necessary for each of the class to contain more number of instances than the number of predictors in the model. Since our data set ddnt have enough instances from the class 8 we combined class 8 and class 7 instances to try QDA on our data. 
+
+
+```{r QDA, message=FALSE, warning=FALSE}
+
+qda_trainWHRY = trainWHRY
+qda_trainWHRY[qda_trainWHRY==8] = 7
+qda_trainWHRY = droplevels(qda_trainWHRY)
+
+model_qda <- qda(qda_trainWHRY~., data = trainWHR)
+model_qda
+```
+
+The output contains the group means. But it does not contain the coefficients of the linear discriminants, because the QDA classifier involves a quadratic, rather than a linear, function of the predictors. 
+
+The predict() function works in exactly the same fashion as for LDA. 
+
+The partimat( ) function in the klaR package can display the results of a quadratic classifications, 2 variables at a time. It provides a multiple figure array which shows the classification of observations for every combination of two variables. Moreover, the classification borders are displayed and the apparent error rates are given in each title.
+
+```{r}
+
+partimat(qda_trainWHRY ~ ., data = trainWHR, method = "qda", plot.matrix = TRUE, col.correct='green', col.wrong='red')
+
+```
+
+### Hierarchical clustering
+
+Using hclust() with the distance matrix we can use various techniques of cluster analysis for relationship discovery and plot a dendrogram that displays a hierarchical relationship among the classes. 
+
+```{r}
+WHRStd = as.data.frame(scale(WHR[2:7]))
+
+clusters <- hclust(dist(WHRStd),method = 'average')
+dend <- as.dendrogram(clusters)
+COLS = c("#CC9709","#009942","#F818FF","#136CFF","#460CCC","#FF0012")
+names(COLS) = unique(WHRDiscrete$Score)
+dend <- color_labels(dend, col = COLS[WHRDiscrete$Score[labels(dend)]])
+plot(dend, main = "Dendrogram for Score classes") 
+
+```
+
+We can see from the above figure that the best choices for total number of clusters are either 4 or 3. Also averge linkage showed the best result amoung the available options in the hclust() function. 
+
+```{r}
+clusterCut <- cutree(clusters, 4)
+table(clusterCut,WHRDiscrete$Score)
+```
+
+
+```{r}
+clusterCut <- cutree(clusters, 3)
+table(clusterCut,WHRDiscrete$Score)
+```
+For the '3' cluster cut it looks like the algorithm successfully classified all the scores greater than 5. And for scores less than and equal to 5 the cluster cut '3' splited better than cluster '4'. Both the clusters had trouble with score class 3. 
+
+
+## Predictions
+
+In this section we make predictions using the previously trained models and evaluate how<br>
+good they are.<br>
+
+### LR
+
+```{r LRPredict}
+LRPred = LRPredFunction(LRModel,testWHR,testWHRY)
+```
+
+Accuracy.<br>
+
+```{r LRAccuracy}
+Accuracy(LRPred,testWHRY)
+```
+
+Confusion Matrix.<br>
+
+```{r LRConfMatrix}
+table(LRPred,testWHRY)
+```
+
+### LR Lasso
+
+```{r LRLassoPredict}
+LRLassoPred = LRLassoPredFunction(LRLassoModel,testWHR,testWHRY,parameters = list("lambda"=LRLassoLambda))
+```
+
+Accuracy.<br>
+
+```{r LRLassoAccuracy}
+Accuracy(LRLassoPred,testWHRY)
+```
+
+Confusion Matrix.<br>
+
+```{r LRLassoConfMatrix}
+table(LRLassoPred,testWHRY)
+```
+
+### LR Ridge
+
+```{r LRRidgePredict}
+LRRidgePred = LRRidgePredFunction(LRRidgeModel,testWHR,testWHRY,parameters = list("lambda"=LRRidgeLambda))
+```
+
+Accuracy.<br>
+
+```{r LRRidgeAccuracy}
+Accuracy(LRRidgePred,testWHRY)
+```
+
+Confusion Matrix.<br>
+
+```{r LRRidgeConfMatrix}
+table(LRRidgePred,testWHRY)
+```
+
+
+### MLR
+
+```{r MLRPredict}
+MLRPred = MLRPredFunction(MLRModel,testWHR,testWHRY)
+```
+
+Accuracy.<br>
+
+```{r MLRAccuracy}
+Accuracy(MLRPred,testWHRY)
+```
+
+Confusion Matrix.<br>
+
+```{r MLRConfMatrix}
+table(MLRPred,testWHRY)
+```
+
+### MLR Lasso
+
+```{r MLRLassoPredict}
+MLRLassoPred = MLRLassoPredFunction(MLRLassoModel,testWHR,testWHRY,parameters = list("lambda"=MLRLassoLambda))
+```
+
+Accuracy.<br>
+
+```{r MLRLassoAccuracy}
+Accuracy(MLRLassoPred,testWHRY)
+```
+
+Confusion Matrix.<br>
+
+```{r MLRLassoConfMatrix}
+table(MLRLassoPred,testWHRY)
+```
+
+### MLR Ridge
+
+```{r MLRRidgePredict}
+MLRRidgePred = MLRRidgePredFunction(MLRRidgeModel,testWHR,testWHRY,parameters = list("lambda"=MLRRidgeLambda))
+```
+
+Accuracy.<br>
+
+```{r MLRRidgeAccuracy}
+Accuracy(MLRRidgePred,testWHRY)
+```
+
+Confusion Matrix.<br>
+
+```{r MLRRidgeConfMatrix}
+table(MLRRidgePred,testWHRY)
+```
+
+### LDA
+
+Accuracy.<br>
+
+```{r}
+predictions = model_lda %>% predict(testWHR)
+t = table(predictions$class, testWHRY )
+print(confusionMatrix(t))
+
+```
+
+As we can see, LDA reached around 70% of accuracy as a classifier. LDA basically projects the data in a new linear feature space, obviously the classifier will reach high accuracy if the data are completly linear separable.
+
+Since LDA assumes normal distributed data, we tried modeling with normalized predictors but the accuracy fell down to 0.2352941 from 0.6764706.
+
+### QDA
+
+Accuracy.<br>
+
+```{r}
+
+qda_testWHRY = testWHRY
+qda_testWHRY[qda_testWHRY==8] = 7
+qda_testWHRY = droplevels(qda_testWHRY)
+
+predictions = model_qda %>% predict(testWHR)
+t = table(predictions$class, qda_testWHRY )
+print(confusionMatrix(t))
+```
+
+As expected due to the class issue we had to resolve, QDA scored lower in accuracy as a classifier. 
+
+### Hierarchical clustering
+
+Cluster Plot <br>
+
+All the points where the inner color doesn’t match the outer color are the ones which were clustered incorrectly.
+
+
+```{r }
+ggplot(WHRStd, aes(GDP.per.capita, Social.support, color = WHRDiscrete$Score)) + 
+  geom_point(alpha = 0.4, size = 3.5) + geom_point(col = clusterCut) + 
+  scale_color_manual(values = c('black', 'red', 'green','blue','orange','pink'))
+```
+
+All the points where the inner color doesn’t match the outer color are the ones which were clustered incorrectly.
+
+Accuracy is not the most accurate term when it comes to clustering, but so as to see whether the hierarchical clustering gave clusters or groups that coincide with our labels we tried to roughly calculate the coincidence, which tells for each cluster, which is the majority class.
+
+```{r}
+Majority_class = tapply(factor(WHRDiscrete$Score),clusterCut,function(i)names(sort(table(i)))[2])
+Majority_class
+```
+And from there we tried to see how much this agrees with the actual labels.
+
+```{r}
+mean(Majority_class[clusterCut] == (WHRDiscrete$Score))
+```
+It was seen that the clustring did not really capture the essence of the data very well. 
+
+## Results
+
+From all the tested models the linear regression obtained the worst results, of 0.38 accuracy, while the linear discriminant analysis, the best, of 0.68 accuracy.<br>
+Both LR and LDA placed in their positions by a large margin to the other methods, leaving no doubt, which is the worst and the best method for this data.<br>
+For both clustering methods we did not obtain predictions and as such accuracy of the methods. Although such would be possible, it would not make sense, given the arbitrary nature of the split of the data into different classes.<br>
+
+## Conclusions
+
+The original data, without the division into classes, posed a simple problem, given that there is a known linear deterministic formula to transform the features of the data into the score value.<br>
+The division of the scores into different classes increases the difficulty of the problem by an extreme amount. Now the linear relations present in the data are much harder to obtain, and as such the performance is substantially lower than what we would previously be able to obtain.<br>
+To add the problem, the dataset is quite small, not allowing for more moderns methods that rely on large volumes of data (such as neural networks).<br>
+
+Linear regression showed it inadequacy to deal with multiclass classification problems, with all versions of it having much worse results than other methods.<br>
+Logistic regression performed worse than expected, with all variants achieving only about 0.5 accuracy.<br>
+While on the other hand LDA performed surprisingly well, showing the strength of this method for classification problems with low amounts of data.<br>
+There were some problems with QDA, namely the fact that it could not handle the original data, due to the low amount of data for certain classes. This definitely reduced the performance of the model.<br>
